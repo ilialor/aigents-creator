@@ -3,239 +3,186 @@ import json
 from typing import Dict, List, Any
 import redis
 from uuid import uuid4
+from jsonschema import validate
+import os
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения
+load_dotenv()
 
 class LLMOrchestrator:
     def __init__(self):
-        self.ollama_url = "http://aigents-storage-ollama-1:11434"
-        self.practice_store_url = "http://aigents-storage-api-1:8000/practices"
-        self.redis = redis.Redis(host='redis', port=6379, decode_responses=True)
+        self.dify_url = os.getenv('DIFY_API_URL')
+        self.dify_token = os.getenv('DIFY_API_KEY')
         
+        # Получаем базовый URL и путь отдельно
+        self.storage_base_url = os.getenv('STORAGE_API_URL', 'http://aigents-storage-api-1:8000')
+        self.storage_practices_path = os.getenv('STORAGE_PRACTICES_PATH', '/api/v1/practices')
+        
+        if not all([self.dify_url, self.dify_token, self.storage_base_url]):
+            raise Exception("Missing required environment variables")
+            
+        # Загружаем схему для валидации
+        with open('src/schemas/practice_schema.json') as f:
+            self.schema = json.load(f)
+
+    def _normalize_response(self, response: Dict) -> Dict:
+        """
+        Нормализует ответ от LLM в соответствии со схемой API
+        """
+        # Получаем domain как строку
+        domain = response.get("domain", "general")
+        if isinstance(domain, list):
+            domain = domain[0] if domain else "general"
+            # Добавляем остальные домены в sub_domains если они есть
+            sub_domains = response.get("sub_domains", [])
+            if len(domain) > 1:
+                sub_domains.extend(domain[1:])
+        
+        # Значения по умолчанию для implementation_steps
+        default_steps = [
+            {
+                "order": 1,
+                "title": "Plan and Prepare",
+                "description": "Define objectives and gather necessary resources for implementation. Create detailed timeline and assign responsibilities."
+            },
+            {
+                "order": 2,
+                "title": "Execute and Monitor",
+                "description": "Implement the practice while monitoring progress and results. Make adjustments based on feedback and performance metrics."
+            }
+        ]
+
+        normalized = {
+            "title": response.get("title", "Systematic Process Improvement Framework"),
+            "summary": response.get("summary", "A comprehensive methodology for analyzing and improving organizational processes through systematic assessment, implementation, and continuous monitoring of improvements. This approach ensures sustainable positive changes."),
+            "problem": response.get("problem", "Organizations often struggle with inefficient processes and lack of systematic approaches to improvement, leading to reduced productivity and missed opportunities for optimization."),
+            "solution": response.get("solution", "Implementation of a structured framework that guides organizations through process assessment, improvement planning, and systematic implementation of changes, supported by clear metrics and continuous monitoring."),
+            "visual_type": response.get("visual_type", ""),
+            "visual_url": response.get("visual_url", ""),
+            "visual_alt_text": response.get("visual_alt_text", ""),
+            "benefits": response.get("benefits", [
+                "Significant improvement in process efficiency and effectiveness through systematic implementation",
+                "Enhanced quality and consistency of outputs through standardized approaches"
+            ]),
+            "limitations": response.get("limitations", [
+                "Requires significant time and resource investment for proper implementation and training",
+                "May face resistance to change and require extensive change management efforts"
+            ]),
+            "implementation_steps": response.get("implementation_steps", default_steps),
+            "implementation_requirements": response.get("implementation_requirements", [
+                "Experienced process improvement specialists",
+                "Appropriate analysis and monitoring tools"
+            ]),
+            "estimated_resources": response.get("estimated_resources", [
+                "Process documentation and analysis tools",
+                "Training materials and facilitation resources"
+            ]),
+            "domain": domain,
+            "sub_domains": response.get("sub_domains", ["process_improvement"]),
+            "tags": response.get("tags", ["best_practice", "process_improvement"]),
+            "creator": response.get("creator", "system"),
+            "estimated_financial_cost_value": 0,
+            "estimated_financial_cost_currency": "USD",
+            "estimated_time_cost_minutes": 60,
+            "language": "en"
+        }
+        return normalized
+
     async def generate_practice(self, idea: Dict, similar_practices: List[Dict]) -> Dict:
-        """
-        Генерирует практику через несколько итераций с LLM
-        """
         practice_id = str(uuid4())
+        creator_id = idea.get("creator", "system")
         
         try:
-            # Шаг 1: Генерация черновика MD
-            print(f"Generating MD draft for {practice_id}")
-            md_prompt = self._create_md_prompt(idea, similar_practices)
-            md_draft = await self._call_llm(md_prompt)
-            print(f"MD draft generated: {md_draft[:100]}...")
+            # Отправляем title + description
+            prompt = f"{idea['title']}\n\n{idea['description']}"
             
-            # Шаг 2: Генерация JSON
-            print(f"Generating JSON for {practice_id}")
-            json_prompt = self._create_json_prompt(md_draft, similar_practices)
-            practice_json_str = await self._call_llm(json_prompt)
+            # Получаем JSON практики
+            practice_json_str = await self._call_llm(prompt, creator_id)
             
-            # Пытаемся найти и распарсить JSON в ответе
-            json_start = practice_json_str.find('{')
-            json_end = practice_json_str.rfind('}')
-            
-            if json_start >= 0 and json_end > json_start:
-                json_str = practice_json_str[json_start:json_end + 1]
-                json_str = ' '.join(line.strip() for line in json_str.splitlines())
+            # Парсим JSON
+            try:
+                practice_json = json.loads(practice_json_str)
+                practice_json["creator"] = creator_id
                 
-                try:
-                    practice_json = json.loads(json_str)
-                    print(f"Successfully parsed JSON for {practice_id}")
-                except json.JSONDecodeError as e:
-                    print(f"Failed to parse JSON: {e}")
-                    print(f"Raw JSON string: {json_str}")
-                    raise Exception("Invalid JSON generated by LLM")
-            else:
-                print(f"No JSON found in response: {practice_json_str[:200]}...")
-                raise Exception("No JSON found in LLM response")
+                # Нормализуем ответ перед валидацией
+                practice_json = self._normalize_response(practice_json)
+                
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse JSON: {e}")
+                print(f"Raw JSON string: {practice_json_str}")
+                raise Exception("Invalid JSON generated by LLM")
             
-            # Шаг 3: Уточнение различий
-            if similar_practices:
-                print(f"Refining differences for {practice_id}")
-                diff_prompt = self._create_diff_prompt(practice_json, similar_practices)
-                practice_json_str = await self._call_llm(diff_prompt)
-                try:
-                    practice_json = json.loads(practice_json_str)
-                except json.JSONDecodeError as e:
-                    print(f"Failed to parse refined JSON: {e}")
-                    print(f"Raw refined JSON string: {practice_json_str}")
-                    raise Exception("Invalid JSON generated by LLM")
+            # Валидируем JSON
+            try:
+                validate(instance=practice_json, schema=self.schema)
+            except Exception as e:
+                print(f"JSON validation failed: {e}")
+                raise Exception("Generated practice does not match schema")
             
-            # Сохраняем в Practice Store
-            print(f"Saving practice {practice_id}")
+            # Сохраняем практику
+            practice_url = f"{self.storage_base_url}{self.storage_practices_path}"
+            print(f"Saving practice to {practice_url}")
+            print(f"Practice JSON: {json.dumps(practice_json, indent=2)}")
+            
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    self.practice_store_url,
-                    json=practice_json
+                    practice_url,
+                    json=practice_json,
+                    headers={"Content-Type": "application/json"}
                 ) as response:
-                    if response.status != 201:
-                        error_text = await response.text()
-                        print(f"Failed to save practice: {error_text}")
-                        print(f"Practice JSON: {json.dumps(practice_json, indent=2)}")
-                        raise Exception(f"Failed to save practice: {error_text}")
+                    response_text = await response.text()
                     
-            return practice_json
+                    # Проверяем успешные статусы
+                    if response.status in [200, 201]:
+                        print(f"Successfully saved practice with status {response.status}")
+                        result = json.loads(response_text)
+                        print(f"Save response: {result}")
+                        return result  # Возвращаем ответ от API вместо practice_json
+                    else:
+                        print(f"Failed to save practice: Status {response.status}")
+                        print(f"Response: {response_text}")
+                        print(f"Headers: {response.headers}")
+                        raise Exception(f"Failed to save practice: {response_text}")
             
         except Exception as e:
             print(f"Error generating practice {practice_id}: {str(e)}")
             raise
     
-    def _create_md_prompt(self, idea: Dict, similar_practices: List[Dict]) -> str:
-        return f"""You are an expert system. Create a detailed practice description in markdown format.
-        IMPORTANT: Use EXACTLY the provided idea and do not invent or change the core concept.
-        
-        Input Idea:
-        Title: {idea['title']}
-        Description: {idea['description']}
-        Domain: {idea.get('domain', 'Not specified')}
-        
-        Similar practices to consider:
-        {json.dumps(similar_practices, indent=2)}
-        
-        Create a markdown document that expands on the EXACT provided idea. Do not change the core concept.
-        Include these sections:
-        - Title (use exactly: "{idea['title']}")
-        - Summary (based on the provided description)
-        - Problem Statement
-        - Solution
-        - Implementation Steps
-        - Benefits
-        - Limitations
-        - Requirements
-        
-        The practice should be about: "{idea['description']}"
-        Domain context: {idea.get('domain', 'General')}
+    async def _call_llm(self, prompt: str, creator_id: str = "system") -> Any:
         """
-    
-    def _create_json_prompt(self, md_draft: str, similar_practices: List[Dict]) -> str:
-        return f"""Convert this markdown practice description into a structured JSON format.
-        IMPORTANT: Return ONLY the JSON object without any additional text or explanations.
-        Do not add any text before or after the JSON.
-        The response should start with '{{' and end with '}}'.
-        Use short keys for dictionaries.
-        
-        Example of correct response:
-        {{
-            "title": "Example",
-            "benefits": {{
-                "benefit1": "Description of first benefit",
-                "benefit2": "Description of second benefit"
-            }}
-        }}
-        
-        Example of incorrect response:
-        Here is the JSON:
-        {{
-            "title": "Example",
-            "benefits": {{
-                "this is a very long key that describes the benefit": "Description"
-            }}
-        }}
-        
-        Markdown:
-        {md_draft}
-        
-        Required JSON structure:
-        {{
-            "title": "string",
-            "summary": "string",
-            "problem": "string",
-            "solution": "string",
-            "implementation_steps": ["string"],
-            "benefits": {{
-                "key1": "value1",
-                "key2": "value2"
-            }},
-            "limitations": {{
-                "limit1": "description1",
-                "limit2": "description2"
-            }},
-            "requirements": {{
-                "req1": "description1",
-                "req2": "description2"
-            }},
-            "domain": "string",
-            "sub_domains": ["string"],
-            "tags": ["string"]
-        }}
-        """
-    
-    def _create_diff_prompt(self, practice_json: Dict, similar_practices: List[Dict]) -> str:
-        return f"""Review this practice against similar ones and clarify differences.
-        
-        New practice:
-        {json.dumps(practice_json, indent=2)}
-        
-        Similar practices:
-        {json.dumps(similar_practices, indent=2)}
-        
-        Update the JSON to highlight unique aspects in:
-        - solution
-        - benefits
-        - limitations
-        """
-    
-    async def _call_llm(self, prompt: str) -> Any:
-        """
-        Вызывает LLM через ollama
+        Вызывает LLM через Dify API
         """
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": "llama2",
-                    "prompt": prompt,
-                    "temperature": 0.7,
-                    "max_tokens": 2048
-                }
-            ) as response:
-                full_response = ""
-                buffer = ""
-                
-                async for chunk in response.content.iter_chunked(1024):
-                    buffer += chunk.decode()
-                    lines = buffer.split('\n')
+            headers = {
+                "Authorization": f"Bearer {self.dify_token}",
+                "Content-Type": "application/json",
+                "Origin": "http://localhost:8080",
+                "Access-Control-Allow-Origin": "*"
+            }
+            
+            data = {
+                "inputs": {},
+                "query": prompt,
+                "response_mode": "blocking",
+                "conversation_id": "",
+                "user": creator_id
+            }
+            
+            try:
+                async with session.post(
+                    self.dify_url,
+                    headers=headers,
+                    json=data,
+                    ssl=False
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        print(f"Dify API error: {error_text}")
+                        raise Exception(f"Dify API error: {response.status}")
                     
-                    for line in lines[:-1]:
-                        if line.strip():
-                            try:
-                                data = json.loads(line)
-                                if 'response' in data:
-                                    full_response += data['response']
-                            except json.JSONDecodeError:
-                                continue
-                    
-                    buffer = lines[-1]
-                
-                if buffer.strip():
-                    try:
-                        data = json.loads(buffer)
-                        if 'response' in data:
-                            full_response += data['response']
-                    except json.JSONDecodeError:
-                        pass
-
-                # Пытаемся найти и распарсить JSON
-                try:
-                    # Ищем начало и конец JSON
-                    json_start = full_response.find('{')
-                    json_end = full_response.rfind('}')
-                    
-                    if json_start >= 0 and json_end > json_start:
-                        # Извлекаем JSON часть
-                        json_str = full_response[json_start:json_end + 1]
-                        
-                        # Убираем переносы строк и лишние пробелы
-                        json_str = ' '.join(line.strip() for line in json_str.splitlines())
-                        
-                        # Пробуем распарсить
-                        try:
-                            return json.loads(json_str)
-                        except json.JSONDecodeError as e:
-                            print(f"Failed to parse cleaned JSON: {e}")
-                            print(f"Cleaned JSON string: {json_str}")
-                    else:
-                        print(f"No JSON found in response: {full_response[:200]}...")
-                        
-                    return full_response
-                except Exception as e:
-                    print(f"Error processing response: {e}")
-                    return full_response 
+                    result = await response.json()
+                    return result.get("answer", "")
+            except aiohttp.ClientError as e:
+                print(f"Network error calling Dify API: {e}")
+                raise Exception(f"Network error: {e}") 

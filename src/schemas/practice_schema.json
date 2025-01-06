@@ -1,0 +1,191 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "title": "Practice Schema",
+    "description": "Schema for validating practice descriptions",
+    "required": [
+        "title",
+        "summary",
+        "problem",
+        "solution",
+        "benefits",
+        "limitations",
+        "implementation_steps",
+        "implementation_requirements",
+        "estimated_financial_cost_value",
+        "estimated_financial_cost_currency",
+        "estimated_time_cost_minutes",
+        "estimated_resources",
+        "tags",
+        "language",
+        "domain",
+        "sub_domains",
+        "creator"
+    ],
+    "properties": {
+        "title": {
+            "type": "string",
+            "description": "Title of the practice",
+            "minLength": 5,
+            "maxLength": 200
+        },
+        "summary": {
+            "type": "string",
+            "description": "Brief overview of the practice",
+            "minLength": 50,
+            "maxLength": 500
+        },
+        "problem": {
+            "type": "string",
+            "description": "Description of the problem being addressed",
+            "minLength": 50,
+            "maxLength": 1000
+        },
+        "solution": {
+            "type": "string",
+            "description": "Proposed solution to the problem",
+            "minLength": 50,
+            "maxLength": 1000
+        },
+        "implementation_steps": {
+            "type": "array",
+            "description": "List of steps to implement the practice",
+            "items": {
+                "type": "object",
+                "required": ["order", "title", "description"],
+                "properties": {
+                    "order": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "title": {
+                        "type": "string",
+                        "minLength": 5,
+                        "maxLength": 100
+                    },
+                    "description": {
+                        "type": "string",
+                        "minLength": 10,
+                        "maxLength": 500
+                    }
+                }
+            },
+            "minItems": 2,
+            "maxItems": 10
+        },
+        "implementation_requirements": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 100
+            },
+            "minItems": 1
+        },
+        "estimated_resources": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 100
+            },
+            "minItems": 1
+        },
+        "benefits": {
+            "type": "array",
+            "description": "List of benefits",
+            "items": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 500
+            },
+            "minItems": 1,
+            "maxItems": 5
+        },
+        "limitations": {
+            "type": "array",
+            "description": "List of limitations",
+            "items": {
+                "type": "string",
+                "minLength": 5,
+                "maxLength": 500
+            },
+            "minItems": 1,
+            "maxItems": 5
+        },
+        "requirements": {
+            "type": "object",
+            "description": "Requirements for implementing the practice",
+            "minProperties": 1,
+            "maxProperties": 5,
+            "patternProperties": {
+                "^[a-z_][a-z0-9_]{2,30}$": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 500
+                }
+            },
+            "additionalProperties": false
+        },
+        "domain": {
+            "type": "string",
+            "description": "Main domain of the practice",
+            "minLength": 2,
+            "maxLength": 50
+        },
+        "sub_domains": {
+            "type": "array",
+            "description": "List of related sub-domains",
+            "items": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 50
+            },
+            "minItems": 1,
+            "maxItems": 5
+        },
+        "tags": {
+            "type": "array",
+            "description": "List of relevant tags",
+            "items": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 30
+            },
+            "minItems": 1,
+            "maxItems": 10
+        },
+        "creator": {
+            "type": "string",
+            "description": "ID of the practice creator",
+            "minLength": 1,
+            "maxLength": 100
+        },
+        "estimated_financial_cost_value": {
+            "type": "number",
+            "minimum": 0
+        },
+        "estimated_time_cost_minutes": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "estimated_financial_cost_currency": {
+            "type": "string",
+            "enum": ["USD"]
+        },
+        "language": {
+            "type": "string",
+            "enum": ["en"]
+        },
+        "visual_type": {
+            "type": "string"
+        },
+        "visual_url": {
+            "type": "string"
+        },
+        "visual_alt_text": {
+            "type": "string"
+        }
+    },
+    "additionalProperties": false
+} 
