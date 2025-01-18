@@ -1,0 +1,7 @@
+# Logs
+logs/
+*.log
+
+# Файлы отслеживания прогресса
+logs/successful_practices.txt
+logs/failed_practices.txt 
