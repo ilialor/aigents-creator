@@ -20,7 +20,8 @@
         "language",
         "domain",
         "sub_domains",
-        "creator"
+        "creator",
+        "category"
     ],
     "properties": {
         "title": {
@@ -185,6 +186,11 @@
         },
         "visual_alt_text": {
             "type": "string"
+        },
+        "category": {
+            "type": "string",
+            "description": "Category of the practice, e.g., 'concept' or 'implementation'",
+            "enum": ["concept", "implementation"]
         }
     },
     "additionalProperties": false

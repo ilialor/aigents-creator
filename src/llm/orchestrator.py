@@ -85,7 +85,8 @@ class LLMOrchestrator:
             "estimated_financial_cost_value": 0,
             "estimated_financial_cost_currency": "USD",
             "estimated_time_cost_minutes": 60,
-            "language": "en"
+            "language": "en",
+            "category": response.get("category", "concept")  # По умолчанию считаем, что это концепт
         }
         return normalized
 
@@ -104,6 +105,10 @@ class LLMOrchestrator:
             try:
                 practice_json = json.loads(practice_json_str)
                 practice_json["creator"] = creator_id
+                
+                # Добавляем категорию из additional_details если она есть
+                if "additional_details" in idea and "category" in idea["additional_details"]:
+                    practice_json["category"] = idea["additional_details"]["category"]
                 
                 # Нормализуем ответ перед валидацией
                 practice_json = self._normalize_response(practice_json)
