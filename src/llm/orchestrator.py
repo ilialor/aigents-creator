@@ -6,6 +6,7 @@ from uuid import uuid4
 from jsonschema import validate
 import os
 from dotenv import load_dotenv
+from .rag import ContextAugmenter
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -25,7 +26,10 @@ class LLMOrchestrator:
         # Загружаем схему для валидации
         with open('src/schemas/practice_schema.json') as f:
             self.schema = json.load(f)
-
+            
+        # Инициализируем компоненты
+        self.augmenter = ContextAugmenter()
+            
     def _normalize_response(self, response: Dict) -> Dict:
         """
         Нормализует ответ от LLM в соответствии со схемой API
@@ -90,16 +94,19 @@ class LLMOrchestrator:
         }
         return normalized
 
-    async def generate_practice(self, idea: Dict, similar_practices: List[Dict]) -> Dict:
+    async def generate_practice(self, idea: Dict, similar_practices: List[Dict] = None) -> Dict:
+        """
+        Генерирует новую практику с использованием RAG
+        """
         practice_id = str(uuid4())
         creator_id = idea.get("creator", "system")
         
         try:
-            # Отправляем title + description
-            prompt = f"{idea['title']}\n\n{idea['description']}"
+            # Получаем обогащенный промпт через RAG
+            prompt = await self.augmenter.augment_with_context(idea)
             
-            # Получаем JSON практики
-            practice_json_str = await self._call_llm(prompt, creator_id)
+            # Генерируем практику
+            practice_json_str = await self.augmenter.generate_with_rag(prompt)
             
             # Парсим JSON
             try:
@@ -124,7 +131,7 @@ class LLMOrchestrator:
             except Exception as e:
                 print(f"JSON validation failed: {e}")
                 raise Exception("Generated practice does not match schema")
-            
+
             # Сохраняем практику
             practice_url = f"{self.storage_base_url}{self.storage_practices_path}"
             print(f"Saving practice to {practice_url}")
@@ -143,13 +150,13 @@ class LLMOrchestrator:
                         print(f"Successfully saved practice with status {response.status}")
                         result = json.loads(response_text)
                         print(f"Save response: {result}")
-                        return result  # Возвращаем ответ от API вместо practice_json
+                        return result
                     else:
                         print(f"Failed to save practice: Status {response.status}")
                         print(f"Response: {response_text}")
                         print(f"Headers: {response.headers}")
                         raise Exception(f"Failed to save practice: {response_text}")
-            
+
         except Exception as e:
             print(f"Error generating practice {practice_id}: {str(e)}")
             raise
